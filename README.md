@@ -22,4 +22,4 @@ Number of tries: 3984
 
 To test it out, try single.sh.
 
-[c0nrad](poptarts4liffe@gmail.com)
+[c0nrad](mailto:poptarts4liffe@gmail.com)
