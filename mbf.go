@@ -25,9 +25,8 @@ func login(db *mgo.Database, user, pass []byte) bool {
 	err := db.Login(string(user[:]), string(pass[:]))
 	if err == nil {
 		return true
-	} else {
-		return false
 	}
+	return false
 }
 
 func loadPasswords(filename string) [][]byte {
