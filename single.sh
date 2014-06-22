@@ -18,4 +18,13 @@ mongo addUser.js
 
 sleep 2
 
-go run mbf.go
+echo "localhost:27017" > hosts.hosts
+time go run mbf.go
+
+# WE DID IT!
+# Password is admin:1337h4x0r
+
+# real	0m4.187s
+# user	0m0.977s
+# sys	0m0.574s
+
